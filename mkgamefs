@@ -1,0 +1,372 @@
+#!/usr/bin/env bash
+# mkgamefs - Game Filesystem Creator
+# Package games into optimized DwarFS archives with Wine/Proton support
+
+set -euo pipefail
+
+VERSION="1.0.0"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Source library modules
+source "$SCRIPT_DIR/lib/utils.sh"
+source "$SCRIPT_DIR/lib/detect.sh"
+source "$SCRIPT_DIR/lib/runtime.sh"
+source "$SCRIPT_DIR/lib/compress.sh"
+source "$SCRIPT_DIR/lib/launcher.sh"
+source "$SCRIPT_DIR/lib/test.sh"
+source "$SCRIPT_DIR/lib/info.sh"
+
+# Show usage
+usage() {
+    cat << EOF
+mkgamefs ${VERSION} - Game Filesystem Creator
+
+USAGE:
+    mkgamefs <COMMAND> [OPTIONS]
+
+COMMANDS:
+    create      Package a game directory into DwarFS archive
+    extract     Extract a game package
+    test        Run validation tests on a package
+    info        Show package information
+    help        Show this help message
+
+EXAMPLES:
+    # Create a game package
+    mkgamefs create -i ~/Games/MyGame -o MyGame-Package
+
+    # Create with specific runtime
+    mkgamefs create -i ~/Games/WindowsGame -o WindowsGame --runtime wine
+
+    # Extract a package
+    mkgamefs extract -i MyGame-Package -o ~/Games/MyGame-Extracted
+
+    # Test a package
+    mkgamefs test MyGame-Package
+
+    # Show package info
+    mkgamefs info MyGame-Package
+
+For command-specific help:
+    mkgamefs <COMMAND> --help
+
+EOF
+}
+
+# Show create command help
+usage_create() {
+    cat << EOF
+mkgamefs create - Create a game package
+
+USAGE:
+    mkgamefs create -i <INPUT> -o <OUTPUT> [OPTIONS]
+
+OPTIONS:
+    -i, --input DIR         Input game directory (required)
+    -o, --output DIR        Output package directory (required)
+    -n, --name NAME         Game name (default: directory name)
+    -r, --runtime TYPE      Runtime type: auto, wine, proton, native
+    -l, --level LEVEL       Compression level 0-9 (default: 7)
+    -f, --force             Overwrite existing package
+    --no-categorize         Disable file categorization
+    --no-vulkan            Don't download Vulkan components
+    -h, --help             Show this help
+
+EXAMPLES:
+    mkgamefs create -i ~/Games/Factorio -o Factorio-Package
+    mkgamefs create -i ~/Games/Cyberpunk -o Cyberpunk --runtime proton -l 9
+
+EOF
+}
+
+# Create command
+cmd_create() {
+    local input_dir=""
+    local output_dir=""
+    local game_name=""
+    local runtime="auto"
+    local compression_level=7
+    local force=false
+    local no_categorize=false
+    local no_vulkan=false
+    
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -i|--input)
+                input_dir="$2"
+                shift 2
+                ;;
+            -o|--output)
+                output_dir="$2"
+                shift 2
+                ;;
+            -n|--name)
+                game_name="$2"
+                shift 2
+                ;;
+            -r|--runtime)
+                runtime="$2"
+                shift 2
+                ;;
+            -l|--level)
+                compression_level="$2"
+                shift 2
+                ;;
+            -f|--force)
+                force=true
+                shift
+                ;;
+            --no-categorize)
+                no_categorize=true
+                shift
+                ;;
+            --no-vulkan)
+                no_vulkan=true
+                shift
+                ;;
+            -h|--help)
+                usage_create
+                exit 0
+                ;;
+            *)
+                log_error "Unknown option: $1"
+                usage_create
+                exit 1
+                ;;
+        esac
+    done
+    
+    # Validate required arguments
+    if [[ -z "$input_dir" ]] || [[ -z "$output_dir" ]]; then
+        log_error "Missing required arguments"
+        usage_create
+        exit 1
+    fi
+    
+    # Expand home directory and convert to absolute paths
+    input_dir="${input_dir/#\~/$HOME}"
+    output_dir="${output_dir/#\~/$HOME}"
+    input_dir=$(get_absolute_path "$input_dir")
+    output_dir=$(get_absolute_path "$output_dir")
+    game_name="${game_name:-$(basename "$input_dir")}"
+    
+    # Check dependencies
+    check_not_root
+    check_dependencies || exit 1
+    check_optional_dependencies
+    
+    # Validate input
+    validate_input_dir "$input_dir" || exit 1
+    
+    if [[ -d "$output_dir" ]] && [[ ! "$force" == "true" ]]; then
+        log_error "Output directory already exists: $output_dir"
+        log_info "Use --force to overwrite"
+        exit 1
+    fi
+    
+    # Print header
+    print_header "🎮 Creating Game Package: $game_name"
+    
+    # Phase 1: Analysis
+    declare -A game_info
+    declare -A runtime_info
+    declare -A compress_options
+    
+    analyze_game "$input_dir" game_info
+    print_detection_summary game_info
+    
+    # Phase 2: Runtime Configuration
+    if [[ "$runtime" == "auto" ]]; then
+        determine_runtime "${game_info[type]}" runtime_info || exit 1
+    else
+        runtime_info[runtime]="$runtime"
+        runtime_info[needs_wine]=$([[ "$runtime" =~ wine|proton ]] && echo "true" || echo "false")
+    fi
+    
+    if [[ "${runtime_info[needs_wine]}" == "true" ]]; then
+        detect_vulkan_components runtime_info
+    fi
+    
+    print_runtime_summary runtime_info
+    
+    # Phase 3: Prepare package directory
+    log_step "Preparing package directory..."
+    mkdir -p "$output_dir/files" || die "Failed to create package directory"
+    
+    # Phase 4: Handle Vulkan components
+    if [[ "${runtime_info[needs_wine]}" == "true" ]] && [[ "$no_vulkan" == "false" ]]; then
+        if [[ "${runtime_info[has_dxvk]}" == "false" ]] || [[ "${runtime_info[has_vkd3d]}" == "false" ]]; then
+            log_step "Downloading Vulkan components..."
+            local vulkan_dir=$(create_temp_dir "vulkan")
+            mkdir -p "$vulkan_dir/vulkan"
+            
+            [[ "${runtime_info[has_dxvk]}" == "false" ]] && download_dxvk "$vulkan_dir/vulkan"
+            [[ "${runtime_info[has_vkd3d]}" == "false" ]] && download_vkd3d "$vulkan_dir/vulkan"
+            
+            create_vulkan_tarball "$vulkan_dir/vulkan" "$output_dir/files/vulkan.tar.xz"
+            cleanup_temp_dir "$vulkan_dir"
+        fi
+    fi
+    
+    # Phase 5: Compression
+    determine_compression_settings "${game_info[engine]}" "${game_info[dir_size]}" compress_options
+    
+    [[ "$no_categorize" == "true" ]] && compress_options[categorize]="false"
+    [[ "$force" == "true" ]] && compress_options[force]="true"
+    compress_options[compression_level]="$compression_level"
+    
+    local dwarfs_file="$output_dir/files/game-root.dwarfs"
+    compress_to_dwarfs "$input_dir" "$dwarfs_file" compress_options || exit 1
+    
+    # Get final sizes
+    local compressed_size=$(stat -c%s "$dwarfs_file")
+    print_compression_summary "${game_info[dir_size]}" "$compressed_size"
+    
+    # Phase 6: Generate launchers
+    generate_launcher_files "$output_dir" game_info runtime_info
+    
+    # Success
+    print_header "✅ Package Created Successfully!"
+    echo
+    log_success "Package location: $output_dir"
+    log_info "To launch the game: cd $output_dir && ./start.sh"
+    echo
+}
+
+# Extract command
+cmd_extract() {
+    local input_dir=""
+    local output_dir=""
+    
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -i|--input)
+                input_dir="$2"
+                shift 2
+                ;;
+            -o|--output)
+                output_dir="$2"
+                shift 2
+                ;;
+            -h|--help)
+                echo "mkgamefs extract - Extract a game package"
+                echo
+                echo "USAGE: mkgamefs extract -i <PACKAGE> -o <OUTPUT>"
+                echo
+                echo "OPTIONS:"
+                echo "  -i, --input DIR     Package directory"
+                echo "  -o, --output DIR    Output directory"
+                exit 0
+                ;;
+            *)
+                log_error "Unknown option: $1"
+                exit 1
+                ;;
+        esac
+    done
+    
+    if [[ -z "$input_dir" ]] || [[ -z "$output_dir" ]]; then
+        log_error "Missing required arguments"
+        exit 1
+    fi
+    
+    input_dir=$(get_absolute_path "$input_dir")
+    output_dir=$(get_absolute_path "$output_dir")
+    
+    local dwarfs_file="$input_dir/files/game-root.dwarfs"
+    
+    if [[ ! -f "$dwarfs_file" ]]; then
+        log_error "DwarFS archive not found: $dwarfs_file"
+        exit 1
+    fi
+    
+    print_header "📂 Extracting Package"
+    
+    extract_from_dwarfs "$dwarfs_file" "$output_dir" || exit 1
+    
+    log_success "Extraction complete: $output_dir"
+}
+
+# Test command
+cmd_test() {
+    local package_dir="$1"
+    
+    if [[ -z "$package_dir" ]]; then
+        log_error "Missing package directory"
+        echo "USAGE: mkgamefs test <PACKAGE>"
+        exit 1
+    fi
+    
+    package_dir=$(get_absolute_path "$package_dir")
+    
+    if [[ ! -d "$package_dir" ]]; then
+        log_error "Package directory not found: $package_dir"
+        exit 1
+    fi
+    
+    check_dependencies || exit 1
+    
+    run_full_test_suite "$package_dir"
+}
+
+# Info command
+cmd_info() {
+    local package_dir="$1"
+    
+    if [[ -z "$package_dir" ]]; then
+        log_error "Missing package directory"
+        echo "USAGE: mkgamefs info <PACKAGE>"
+        exit 1
+    fi
+    
+    package_dir=$(get_absolute_path "$package_dir")
+    
+    if [[ ! -d "$package_dir" ]]; then
+        log_error "Package directory not found: $package_dir"
+        exit 1
+    fi
+    
+    show_package_info "$package_dir"
+}
+
+# Main
+main() {
+    if [[ $# -eq 0 ]]; then
+        usage
+        exit 0
+    fi
+    
+    local command="$1"
+    shift
+    
+    case "$command" in
+        create)
+            cmd_create "$@"
+            ;;
+        extract)
+            cmd_extract "$@"
+            ;;
+        test)
+            cmd_test "$@"
+            ;;
+        info)
+            cmd_info "$@"
+            ;;
+        help|--help|-h)
+            usage
+            exit 0
+            ;;
+        --version|-v)
+            echo "mkgamefs $VERSION"
+            exit 0
+            ;;
+        *)
+            log_error "Unknown command: $command"
+            usage
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"
