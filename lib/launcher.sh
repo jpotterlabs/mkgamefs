@@ -42,10 +42,14 @@ GAME_ROOT="$PWD/files/game-root"
 dwarfs-mount() {
     dwarfs-unmount &> /dev/null
     
+    local HWRAMTOTAL
     HWRAMTOTAL="$(grep MemTotal /proc/meminfo | awk '{print $2}')"
+    local CACHEONRAM
     CACHEONRAM=$((HWRAMTOTAL * 25 / 100))
     
+    local CORUID
     CORUID="$(id -u $USER)"
+    local CORGID
     CORGID="$(id -g $USER)"
     
     [ -d "$GAME_ROOT" ] && [ "$(ls -A "$GAME_ROOT")" ] && echo "game is mounted or extracted." && return 0
@@ -69,6 +73,7 @@ dwarfs-unmount() {
     fuser -k "$PWD/files/.game-root-mnt" 2>/dev/null
     
     local UMOUNT_DIRS=("$GAME_ROOT" "$PWD/files/.game-root-mnt")
+    local dir
     for dir in "${UMOUNT_DIRS[@]}"; do
         fusermount3 -u -z "$dir" 2>/dev/null
     done
@@ -117,7 +122,8 @@ wine-initiate_prefix() {
 wine-setup_external_vulkan() {
     if [ -f "$PWD/files/vulkan.tar.xz" ]; then
         echo "Installing Vulkan components..."
-        local temp_dir=$(mktemp -d)
+        local temp_dir
+        temp_dir=$(mktemp -d)
         tar -xJf "$PWD/files/vulkan.tar.xz" -C "$temp_dir" || {
             echo "error: failed to extract Vulkan components"
             rm -rf "$temp_dir"
@@ -126,6 +132,7 @@ wine-setup_external_vulkan() {
         
         # Copy DXVK DLLs
         if [ -d "$temp_dir/vulkan/dxvk" ]; then
+            local dll
             for dll in "$temp_dir/vulkan/dxvk"/*.dll; do
                 [ -f "$dll" ] && cp "$dll" "$WINEPREFIX/drive_c/windows/system32/"
             done
@@ -134,6 +141,7 @@ wine-setup_external_vulkan() {
         
         # Copy VKD3D DLLs
         if [ -d "$temp_dir/vulkan/vkd3d" ]; then
+            local dll
             for dll in "$temp_dir/vulkan/vkd3d"/*.dll; do
                 [ -f "$dll" ] && cp "$dll" "$WINEPREFIX/drive_c/windows/system32/"
             done
@@ -167,6 +175,7 @@ bwrap-run_in_sandbox() {
 
 # Gamescope compositor
 gamescope-run_embedded() {
+    local GAMESCOPE_BIN
     GAMESCOPE_BIN="$(command -v gamescope)"
     [ $GAMESCOPE_FULLSCREEN -eq 1 ] && GAMESCOPE_ARGS+=(-f)
     [ $GAMESCOPE_BORDERLESS -eq 1 ] && GAMESCOPE_ARGS+=(-b)
@@ -176,6 +185,7 @@ gamescope-run_embedded() {
     [ -n "$GAMESCOPE_GAME_HEIGHT" ] && GAMESCOPE_ARGS+=(-h "$GAMESCOPE_GAME_HEIGHT")
     GAMESCOPE_ARGS+=($ADDITIONAL_FLAGS)
     
+    unset WAYLAND_DISPLAY
     "$GAMESCOPE_BIN" "${GAMESCOPE_ARGS[@]}" -- "$@"
 }
 
@@ -287,7 +297,6 @@ generate_start_script() {
     
     # Temporarily disable unbound variable check for array access
     set +u
-    local game_type="${g_info[type]:-native}"
     local executable="${g_info[executable]:-start.sh}"
     local needs_wine="${r_info[needs_wine]:-false}"
     set -u
@@ -467,13 +476,13 @@ CONFIG_EOF
 # Generate all launcher files
 generate_launcher_files() {
     local package_dir=$1
-    local -n g_info=$2
-    local -n r_info=$3
+    local -n game_info_ref=$2
+    local -n runtime_info_ref=$3
     
     print_header "Generating Launcher Scripts"
     
-    generate_actions_script "$package_dir/actions.sh" g_info r_info
-    generate_start_script "$package_dir/start.sh" g_info r_info
+    generate_actions_script "$package_dir/actions.sh" game_info_ref runtime_info_ref
+    generate_start_script "$package_dir/start.sh" game_info_ref runtime_info_ref
     generate_config_file "$package_dir/script_default_settings"
     
     log_success "All launcher files generated"

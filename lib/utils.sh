@@ -6,7 +6,6 @@ readonly COLOR_RESET='\033[0m'
 readonly COLOR_RED='\033[0;31m'
 readonly COLOR_GREEN='\033[0;32m'
 readonly COLOR_YELLOW='\033[0;33m'
-readonly COLOR_BLUE='\033[0;34m'
 readonly COLOR_MAGENTA='\033[0;35m'
 readonly COLOR_CYAN='\033[0;36m'
 readonly COLOR_BOLD='\033[1m'
@@ -82,9 +81,12 @@ check_dependencies() {
     
     log_step "Checking dependencies..."
     
+    local dep
+    local cmd
+    local pkg
     for dep in "${required[@]}"; do
-        local cmd="${dep%%:*}"
-        local pkg="${dep##*:}"
+        cmd="${dep%%:*}"
+        pkg="${dep##*:}"
         
         if ! command_exists "$cmd"; then
             missing+=("$pkg")
@@ -111,13 +113,17 @@ check_optional_dependencies() {
         "wine:System Wine"
         "bwrap:Bubblewrap sandboxing"
         "gamescope:Gamescope compositor"
+        "gum:Interactive prompts"
     )
     
     log_step "Checking optional dependencies..."
     
+    local dep
+    local cmd
+    local desc
     for dep in "${optional[@]}"; do
-        local cmd="${dep%%:*}"
-        local desc="${dep##*:}"
+        cmd="${dep%%:*}"
+        desc="${dep##*:}"
         
         if command_exists "$cmd"; then
             log_success "$desc: $(command -v "$cmd")"
@@ -152,13 +158,14 @@ get_dir_size() {
 calc_compression_ratio() {
     local original=$1
     local compressed=$2
+    local ratio
     
     if [[ $original -eq 0 ]]; then
         echo "0.0"
         return
     fi
     
-    local ratio=$(awk "BEGIN {printf \"%.1f\", ($compressed / $original) * 100}")
+    ratio=$(awk "BEGIN {printf \"%.1f\", ($compressed / $original) * 100}")
     echo "$ratio"
 }
 
@@ -166,13 +173,14 @@ calc_compression_ratio() {
 calc_savings() {
     local original=$1
     local compressed=$2
+    local savings
     
     if [[ $original -eq 0 ]]; then
         echo "0.0"
         return
     fi
     
-    local savings=$(awk "BEGIN {printf \"%.1f\", 100 - (($compressed / $original) * 100)}")
+    savings=$(awk "BEGIN {printf \"%.1f\", 100 - (($compressed / $original) * 100)}")
     echo "$savings"
 }
 
@@ -202,6 +210,7 @@ validate_input_dir() {
 validate_output_path() {
     local path=$1
     local force=$2
+    local dir
     
     if [[ -e "$path" ]] && [[ "$force" != "true" ]]; then
         log_error "Output already exists: $path"
@@ -209,7 +218,7 @@ validate_output_path() {
         return 1
     fi
     
-    local dir=$(dirname "$path")
+    dir=$(dirname "$path")
     if [[ ! -d "$dir" ]]; then
         log_warn "Output directory does not exist, creating: $dir"
         mkdir -p "$dir" || {
@@ -259,12 +268,15 @@ show_progress() {
     local current=$1
     local total=$2
     local width=50
+    local percent
+    local filled
+    local empty
     
-    local percent=$((current * 100 / total))
-    local filled=$((width * current / total))
-    local empty=$((width - filled))
+    percent=$((current * 100 / total))
+    filled=$((width * current / total))
+    empty=$((width - filled))
     
-    printf "\r${COLOR_CYAN}Progress:${COLOR_RESET} ["
+    printf "\r%s" "${COLOR_CYAN}Progress:${COLOR_RESET} ["
     printf "%${filled}s" | tr ' ' '='
     printf "%${empty}s" | tr ' ' ' '
     printf "] %3d%%" "$percent"
@@ -276,7 +288,8 @@ get_system_ram() {
 }
 
 get_cache_size() {
-    local ram_kb=$(get_system_ram)
+    local ram_kb
+    ram_kb=$(get_system_ram)
     echo $((ram_kb * 25 / 100))
 }
 

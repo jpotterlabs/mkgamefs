@@ -35,6 +35,7 @@ detect_game_type() {
     
     # Look for executable files without extensions
     local exec_count=0
+    local file
     while IFS= read -r -d '' file; do
         if [[ -x "$file" ]] && [[ ! -d "$file" ]]; then
             ((exec_count++))
@@ -54,17 +55,17 @@ detect_game_engine() {
     local game_dir=$1
     
     # Unity engine detection
-    if [[ -d "$game_dir/MonoBleedingEdge" ]] || 
-       [[ -f "$game_dir/UnityPlayer.dll" ]] ||
-       [[ -d "$game_dir"/*_Data ]] ||
+    if [[ -d "$game_dir/MonoBleedingEdge" ]] || \
+       [[ -f "$game_dir/UnityPlayer.dll" ]] || \
+       find "$game_dir" -maxdepth 1 -type d -name '*_Data' -print -quit | grep -q . || \
        find "$game_dir" -type f -name "UnityPlayer.so" 2>/dev/null | grep -q .; then
         echo "unity"
         return 0
     fi
     
     # Unreal Engine detection
-    if [[ -d "$game_dir/Engine/Binaries" ]] ||
-       [[ -d "$game_dir/Engine/Content" ]] ||
+    if [[ -d "$game_dir/Engine/Binaries" ]] || \
+       [[ -d "$game_dir/Engine/Content" ]] || \
        find "$game_dir" -type f -name "*.pak" 2>/dev/null | grep -q .; then
         echo "unreal"
         return 0
@@ -102,11 +103,13 @@ find_main_executable() {
     local game_dir=$1
     local game_type=$2
     local candidates=()
+    local basename
     
     if [[ "$game_type" == "windows" ]]; then
         # Look for .exe files in the root directory first, excluding installers and tools
+        local exe
         while IFS= read -r -d '' exe; do
-            local basename=$(basename "$exe")
+            basename=$(basename "$exe")
             # Skip installers, crash handlers, and validation tools
             if [[ ! "$basename" =~ ^(unins|UnityCrashHandler|glslang|validator) ]]; then
                 candidates+=("$exe")
@@ -124,24 +127,26 @@ find_main_executable() {
         if [[ ${#candidates[@]} -gt 0 ]]; then
             local largest=""
             local largest_size=0
+            local size
             for exe in "${candidates[@]}"; do
-                local size=$(stat -c%s "$exe" 2>/dev/null || echo 0)
+                size=$(stat -c%s "$exe" 2>/dev/null || echo 0)
                 if [[ $size -gt $largest_size ]]; then
                     largest_size=$size
                     largest="$exe"
                 fi
             done
-            echo "${largest#$game_dir/}"
+            echo "${largest#"$game_dir"/}"
             return 0
         fi
     else
         # Native Linux game
         # Look for executable files, excluding common tool/test binaries
+        local file
         while IFS= read -r -d '' file; do
-            local basename=$(basename "$file")
+            basename=$(basename "$file")
             # Skip scripts and common validation tools
-            if [[ -x "$file" ]] && 
-               [[ ! "$file" =~ \.(sh|py|pl)$ ]] && 
+            if [[ -x "$file" ]] && \
+               [[ ! "$file" =~ \.(sh|py|pl)$ ]] && \
                [[ ! "$basename" =~ ^(glslang|test|validator|crash_reporter|pdx.*test) ]]; then
                 candidates+=("$file")
             fi
@@ -151,21 +156,23 @@ find_main_executable() {
         if [[ ${#candidates[@]} -gt 0 ]]; then
             local largest=""
             local largest_size=0
+            local size
             for file in "${candidates[@]}"; do
-                local size=$(stat -c%s "$file" 2>/dev/null || echo 0)
+                size=$(stat -c%s "$file" 2>/dev/null || echo 0)
                 if [[ $size -gt $largest_size ]]; then
                     largest_size=$size
                     largest="$file"
                 fi
             done
-            echo "${largest#$game_dir/}"
+            echo "${largest#"$game_dir"/}"
             return 0
         fi
         
         # Look for .sh scripts as fallback
-        local script=$(find "$game_dir" -maxdepth 1 -type f -name "start*.sh" -o -name "run*.sh" -o -name "launch*.sh" | head -n 1)
+        local script
+        script=$(find "$game_dir" -maxdepth 1 -type f -name "start*.sh" -o -name "run*.sh" -o -name "launch*.sh" | head -n 1)
         if [[ -n "$script" ]]; then
-            echo "${script#$game_dir/}"
+            echo "${script#"$game_dir"/}"
             return 0
         fi
     fi
@@ -219,7 +226,7 @@ analyze_game() {
     result[dir_size]=$(get_dir_size "$game_dir")
     
     log_detail "Files: ${result[file_count]}"
-    log_detail "Size: $(human_size ${result[dir_size]})"
+    log_detail "Size: $(human_size "${result[dir_size]}")"
 }
 
 # Detect common save game locations
@@ -238,9 +245,11 @@ detect_save_locations() {
         "*/UserData"
     )
     
+    local pattern
+    local dir
     for pattern in "${patterns[@]}"; do
         while IFS= read -r -d '' dir; do
-            save_dirs+=("${dir#$game_dir/}")
+            save_dirs+=("${dir#"$game_dir"/}")
         done < <(find "$game_dir" -type d -path "$pattern" -print0 2>/dev/null)
     done
     
@@ -295,7 +304,7 @@ print_detection_summary() {
     fi
     
     # Size
-    echo -e "  ${COLOR_BOLD}Size:${COLOR_RESET} $(human_size ${info[dir_size]})"
+    echo -e "  ${COLOR_BOLD}Size:${COLOR_RESET} $(human_size "${info[dir_size]}")"
     echo -e "  ${COLOR_BOLD}Files:${COLOR_RESET} ${info[file_count]}"
     
     # Save locations

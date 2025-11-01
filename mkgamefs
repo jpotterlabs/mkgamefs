@@ -198,7 +198,8 @@ cmd_create() {
     if [[ "${runtime_info[needs_wine]}" == "true" ]] && [[ "$no_vulkan" == "false" ]]; then
         if [[ "${runtime_info[has_dxvk]}" == "false" ]] || [[ "${runtime_info[has_vkd3d]}" == "false" ]]; then
             log_step "Downloading Vulkan components..."
-            local vulkan_dir=$(create_temp_dir "vulkan")
+            local vulkan_dir
+            vulkan_dir=$(create_temp_dir "vulkan")
             mkdir -p "$vulkan_dir/vulkan"
             
             [[ "${runtime_info[has_dxvk]}" == "false" ]] && download_dxvk "$vulkan_dir/vulkan"
@@ -220,7 +221,8 @@ cmd_create() {
     compress_to_dwarfs "$input_dir" "$dwarfs_file" compress_options || exit 1
     
     # Get final sizes
-    local compressed_size=$(stat -c%s "$dwarfs_file")
+    local compressed_size
+    compressed_size=$(stat -c%s "$dwarfs_file")
     print_compression_summary "${game_info[dir_size]}" "$compressed_size"
     
     # Phase 6: Generate launchers

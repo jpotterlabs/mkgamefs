@@ -21,7 +21,8 @@ show_package_info() {
     
     # Get DwarFS info
     log_step "Analyzing DwarFS archive..."
-    local dwarfs_output=$(dwarfsck -i "$dwarfs_file" 2>&1)
+    local dwarfs_output
+    dwarfs_output=$(dwarfsck -i "$dwarfs_file" 2>&1)
     
     echo
     print_separator
@@ -30,27 +31,32 @@ show_package_info() {
     
     # Parse and display info
     if echo "$dwarfs_output" | grep -q "compressed size"; then
-        local compressed=$(echo "$dwarfs_output" | grep "compressed size" | sed 's/.*: //')
+        local compressed
+        compressed=$(echo "$dwarfs_output" | grep "compressed size" | sed 's/.*: //')
         echo -e "  ${COLOR_BOLD}Compressed Size:${COLOR_RESET} $compressed"
     fi
     
     if echo "$dwarfs_output" | grep -q "uncompressed size"; then
-        local uncompressed=$(echo "$dwarfs_output" | grep "uncompressed size" | sed 's/.*: //')
+        local uncompressed
+        uncompressed=$(echo "$dwarfs_output" | grep "uncompressed size" | sed 's/.*: //')
         echo -e "  ${COLOR_BOLD}Uncompressed Size:${COLOR_RESET} $uncompressed"
     fi
     
     if echo "$dwarfs_output" | grep -q "compression ratio"; then
-        local ratio=$(echo "$dwarfs_output" | grep "compression ratio" | sed 's/.*: //')
+        local ratio
+        ratio=$(echo "$dwarfs_output" | grep "compression ratio" | sed 's/.*: //')
         echo -e "  ${COLOR_BOLD}Compression Ratio:${COLOR_RESET} $ratio"
     fi
     
     if echo "$dwarfs_output" | grep -q "inodes"; then
-        local inodes=$(echo "$dwarfs_output" | grep "inodes" | awk '{print $1}')
+        local inodes
+        inodes=$(echo "$dwarfs_output" | grep "inodes" | awk '{print $1}')
         echo -e "  ${COLOR_BOLD}Files/Directories:${COLOR_RESET} $inodes"
     fi
     
     if echo "$dwarfs_output" | grep -q "blocks"; then
-        local blocks=$(echo "$dwarfs_output" | grep "blocks" | awk '{print $1}')
+        local blocks
+        blocks=$(echo "$dwarfs_output" | grep "blocks" | awk '{print $1}')
         echo -e "  ${COLOR_BOLD}Blocks:${COLOR_RESET} $blocks"
     fi
     

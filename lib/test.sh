@@ -31,7 +31,8 @@ test_mount_unmount() {
         return 1
     fi
     
-    local test_mount=$(mktemp -d)
+    local test_mount
+    test_mount=$(mktemp -d)
     
     log_step "Testing mount..."
     if dwarfs "$dwarfs_file" "$test_mount" -o ro; then
@@ -84,6 +85,7 @@ test_launcher_scripts() {
     # Check for required scripts
     local required_scripts=("actions.sh" "start.sh" "script_default_settings")
     local missing=()
+    local script
     
     for script in "${required_scripts[@]}"; do
         if [[ ! -f "$package_dir/$script" ]]; then

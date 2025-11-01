@@ -30,11 +30,15 @@ detect_proton() {
     result[has_proton]="false"
     result[proton_versions]=""
     local versions=()
+    local pattern
+    local dir
+    local version
     
     for pattern in "${proton_dirs[@]}"; do
-        for dir in $pattern; do
+        for dir in $pattern;
+ do
             if [[ -d "$dir" ]] && [[ -f "$dir/proton" ]]; then
-                local version=$(basename "$dir")
+                version=$(basename "$dir")
                 versions+=("$version:$dir")
                 result[has_proton]="true"
             fi
@@ -44,6 +48,7 @@ detect_proton() {
     if [[ ${#versions[@]} -gt 0 ]]; then
         result[proton_versions]="${versions[*]}"
         log_detail "Found Proton: ${#versions[@]} version(s)"
+        local ver
         for ver in "${versions[@]}"; do
             log_detail "  - ${ver%%:*}"
         done
@@ -56,13 +61,16 @@ detect_proton() {
 
 # Get latest Proton version
 get_latest_proton() {
-    local -n versions=$1
+    local -n result=$1
     local latest=""
     local latest_path=""
+    local ver_path
+    local ver
+    local path
     
-    for ver_path in ${versions[proton_versions]}; do
-        local ver="${ver_path%%:*}"
-        local path="${ver_path##*:}"
+    for ver_path in ${result[proton_versions]}; do
+        ver="${ver_path%%:*}"
+        path="${ver_path##*:}"
         
         # Prefer GE versions, then Experimental, then numbered versions
         if [[ "$ver" =~ GE ]] && [[ -z "$latest" || ! "$latest" =~ GE ]]; then
@@ -88,9 +96,9 @@ detect_vulkan_components() {
     
     # Check for DXVK in system
     result[has_dxvk]="false"
-    if [[ -f /usr/lib/wine/x86_64-windows/dxgi.dll ]] || 
-       [[ -f /usr/lib64/wine/dxgi.dll ]] ||
-       [[ -f $HOME/.local/share/lutris/runtime/dxvk/*/x64/dxgi.dll ]]; then
+    if [[ -f /usr/lib/wine/x86_64-windows/dxgi.dll ]] || \
+       [[ -f /usr/lib64/wine/dxgi.dll ]] || \
+       find "$HOME/.local/share/lutris/runtime/dxvk/" -path '*/x64/dxgi.dll' -print -quit | grep -q .; then
         result[has_dxvk]="true"
         log_success "DXVK: Installed"
     else
@@ -99,9 +107,9 @@ detect_vulkan_components() {
     
     # Check for VKD3D-Proton
     result[has_vkd3d]="false"
-    if [[ -f /usr/lib/wine/x86_64-windows/d3d12.dll ]] ||
-       [[ -f /usr/lib64/wine/d3d12.dll ]] ||
-       [[ -f $HOME/.local/share/lutris/runtime/vkd3d/*/x64/d3d12.dll ]]; then
+    if [[ -f /usr/lib/wine/x86_64-windows/d3d12.dll ]] || \
+       [[ -f /usr/lib64/wine/d3d12.dll ]] || \
+       find "$HOME/.local/share/lutris/runtime/vkd3d/" -path '*/x64/d3d12.dll' -print -quit | grep -q .; then
         result[has_vkd3d]="true"
         log_success "VKD3D-Proton: Installed"
     else
@@ -126,7 +134,8 @@ download_dxvk() {
     
     log_step "Downloading DXVK ${version}..."
     
-    local temp_dir=$(create_temp_dir "dxvk")
+    local temp_dir
+    temp_dir=$(create_temp_dir "dxvk")
     
     if curl -L -o "$temp_dir/dxvk.tar.gz" "$url" 2>/dev/null; then
         tar -xzf "$temp_dir/dxvk.tar.gz" -C "$temp_dir" || {
@@ -165,7 +174,8 @@ download_vkd3d() {
         return 1
     fi
     
-    local temp_dir=$(create_temp_dir "vkd3d")
+    local temp_dir
+    temp_dir=$(create_temp_dir "vkd3d")
     
     if curl -L -o "$temp_dir/vkd3d.tar.zst" "$url" 2>/dev/null; then
         zstd -d "$temp_dir/vkd3d.tar.zst" -o "$temp_dir/vkd3d.tar" || {
@@ -197,6 +207,47 @@ download_vkd3d() {
     fi
 }
 
+# Download Proton-GE
+download_proton_ge() {
+    log_step "Downloading latest Proton-GE..."
+    
+    local release_info
+    release_info=$(curl -s "https://api.github.com/repos/GloriousEggroll/proton-ge-custom/releases/latest")
+    
+    local download_url
+    download_url=$(echo "$release_info" | jq -r '.assets[] | select(.name | endswith(".tar.gz")) | .browser_download_url')
+    
+    if [[ -z "$download_url" ]]; then
+        log_error "Could not find download URL for latest Proton-GE release."
+        return 1
+    fi
+    
+    local filename
+    filename=$(basename "$download_url")
+    local temp_dir
+    temp_dir=$(create_temp_dir "proton-ge")
+    
+    if curl -L -o "$temp_dir/$filename" "$download_url"; then
+        local steam_dir="$HOME/.steam/root"
+        local compat_dir="$steam_dir/compatibilitytools.d"
+        mkdir -p "$compat_dir"
+        
+        tar -xzf "$temp_dir/$filename" -C "$compat_dir" || {
+            log_error "Failed to extract Proton-GE"
+            cleanup_temp_dir "$temp_dir"
+            return 1
+        }
+        
+        log_success "Proton-GE downloaded and installed to $compat_dir"
+        cleanup_temp_dir "$temp_dir"
+        return 0
+    else
+        log_error "Failed to download Proton-GE"
+        cleanup_temp_dir "$temp_dir"
+        return 1
+    fi
+}
+
 # Create Vulkan components tarball for package
 create_vulkan_tarball() {
     local components_dir=$1
@@ -220,26 +271,26 @@ create_vulkan_tarball() {
 
 # Configure Wine environment variables
 configure_wine_env() {
-    local -n config=$1
+    local -n config_ref=$1
     
     # Essential Wine settings
-    config[WINEDEBUG]="fixme-all"
-    config[WINE_LARGE_ADDRESS_AWARE]="1"
-    config[WINEFSYNC]="1"
-    config[WINEESYNC]="1"
+    config_ref[WINEDEBUG]="fixme-all"
+    config_ref[WINE_LARGE_ADDRESS_AWARE]="1"
+    config_ref[WINEFSYNC]="1"
+    config_ref[WINEESYNC]="1"
     
     # Vulkan/D3D settings
-    config[WINE_D3D_CONFIG]="renderer=vulkan"
-    config[DXVK_HUD]="0"
-    config[DXVK_LOG_LEVEL]="none"
+    config_ref[WINE_D3D_CONFIG]="renderer=vulkan"
+    config_ref[DXVK_HUD]="0"
+    config_ref[DXVK_LOG_LEVEL]="none"
     
     # Performance
-    config[STAGING_SHARED_MEMORY]="1"
-    config[__GL_SHADER_DISK_CACHE]="1"
-    config[__GL_SHADER_DISK_CACHE_SKIP_CLEANUP]="1"
+    config_ref[STAGING_SHARED_MEMORY]="1"
+    config_ref[__GL_SHADER_DISK_CACHE]="1"
+    config_ref[__GL_SHADER_DISK_CACHE_SKIP_CLEANUP]="1"
     
     # Disable Wine menu/browser
-    config[WINEDLLOVERRIDES]="winemenubuilder.exe=d;mscoree=d;mshtml=d"
+    config_ref[WINEDLLOVERRIDES]="winemenubuilder.exe=d;mscoree=d;mshtml=d"
 }
 
 # Generate Wine prefix initialization script
@@ -284,6 +335,7 @@ setup_vulkan_dlls() {
     
     # Copy DXVK DLLs
     if [[ -d "$vulkan_dir/dxvk" ]]; then
+        local dll
         for dll in "$vulkan_dir/dxvk"/*.dll; do
             [[ -f "$dll" ]] || continue
             cp "$dll" "$prefix_dir/drive_c/windows/system32/"
@@ -293,6 +345,7 @@ setup_vulkan_dlls() {
     
     # Copy VKD3D DLLs
     if [[ -d "$vulkan_dir/vkd3d" ]]; then
+        local dll
         for dll in "$vulkan_dir/vkd3d"/*.dll; do
             [[ -f "$dll" ]] || continue
             cp "$dll" "$prefix_dir/drive_c/windows/system32/"
@@ -328,15 +381,29 @@ determine_runtime() {
     if [[ "${rt_info[has_proton]}" == "true" ]]; then
         rt_info[runtime]="proton"
         rt_info[runtime_path]=$(get_latest_proton rt_info)
-        log_success "Selected runtime: Proton (${rt_info[runtime_path]})"
+        log_success "Selected runtime: Proton (${rt_info[runtime_path]})
     elif [[ "${rt_info[has_wine]}" == "true" ]]; then
         rt_info[runtime]="wine"
         rt_info[runtime_path]="${rt_info[wine_path]}"
         log_success "Selected runtime: System Wine"
     else
-        rt_info[runtime]="none"
-        log_error "No Wine or Proton found - Windows game cannot run"
-        return 1
+        log_warn "No Proton or Wine installations found."
+        if gum confirm "Download latest Proton-GE release?"; then
+            download_proton_ge || return 1
+            detect_proton rt_info
+            if [[ "${rt_info[has_proton]}" == "true" ]]; then
+                rt_info[runtime]="proton"
+                rt_info[runtime_path]=$(get_latest_proton rt_info)
+                log_success "Selected runtime: Proton (${rt_info[runtime_path]})
+            else
+                log_error "Proton-GE installation failed or was not detected."
+                return 1
+            fi
+        else
+            rt_info[runtime]="none"
+            log_error "No Wine or Proton found - Windows game cannot run"
+            return 1
+        fi
     fi
     
     return 0
@@ -382,7 +449,7 @@ print_runtime_summary() {
 
 # Export functions
 export -f detect_wine detect_proton get_latest_proton
-export -f detect_vulkan_components download_dxvk download_vkd3d
+export -f detect_vulkan_components download_dxvk download_vkd3d download_proton_ge
 export -f create_vulkan_tarball configure_wine_env
 export -f generate_wine_prefix_init determine_runtime
 export -f print_runtime_summary

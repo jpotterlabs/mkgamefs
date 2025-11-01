@@ -92,8 +92,9 @@ check_dwarfs_integrity() {
 get_dwarfs_info() {
     local archive=$1
     local -n info=$2
+    local dwarfs_output
     
-    local dwarfs_output=$(dwarfsck -i "$archive" 2>&1)
+    dwarfs_output=$(dwarfsck -i "$archive" 2>&1)
     
     # Parse compression ratio
     if echo "$dwarfs_output" | grep -q "compressed size"; then
@@ -120,9 +121,11 @@ get_dwarfs_info() {
 print_compression_summary() {
     local original_size=$1
     local compressed_size=$2
+    local ratio
+    local savings
     
-    local ratio=$(calc_compression_ratio "$original_size" "$compressed_size")
-    local savings=$(calc_savings "$original_size" "$compressed_size")
+    ratio=$(calc_compression_ratio "$original_size" "$compressed_size")
+    savings=$(calc_savings "$original_size" "$compressed_size")
     
     echo
     print_separator
